@@ -67,16 +67,18 @@ class VehicleSimulator(object):
     # Visiting process of each vehicle
     def work(self, vehicle):
         cur_factory_id = vehicle.cur_factory_id
-        # 当前在工厂: 1. 还处于装卸过程(占用货口资源); 2. 停车状态(不占用货口资源)
+        # Currently in the factory:
+        # 1. Still in the loading and unloading process (occupying cargo port resources);
+        # 2. Parking state (does not occupy cargo port resources)
         if len(cur_factory_id) > 0:
-            # 1.还处于装卸过程(占用货口资源);
+            # 1. Still in the process of loading and unloading (occupying cargo port resources);
             if vehicle.leave_time_at_current_factory > self.env.now:
                 resource = self.factory_id_to_dock_resource.get(cur_factory_id)
                 with resource.request() as req:
                     yield req
                     yield self.env.timeout(vehicle.leave_time_at_current_factory - self.env.now)
 
-            # 2. 停车状态(不占用货口资源)
+            # 2. Parking status (does not occupy cargo port resources)
             else:
                 vehicle.leave_time_at_current_factory = self.env.now
 

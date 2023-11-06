@@ -74,7 +74,7 @@ class Configs(object):
     algorithm_output_planned_route_path = os.path.join(algorithm_data_interaction_folder_path, 'output_route.json')
 
     # 算法入口文件名，不含扩展名
-    ALGORITHM_ENTRY_FILE_NAME = 'main_algorithm'
+    ALGORITHM_ENTRY_FILE_NAME = 'main_algorithm2'
 
     # 算法语言映射表
     ALGORITHM_LANGUAGE_MAP = {'py': 'python',
@@ -99,5 +99,5 @@ class Configs(object):
     A_DAY_TIME_SECONDS = 24 * 60 * 60
 
     # 数据集选项，列表为空则选择所有数据集，如[]，[1], [1, 2, 3], [64]
-    selected_instances = [1]
+    selected_instances = [11]
     all_test_instances = range(1, 65)

@@ -90,6 +90,6 @@ def __initial_position_of_vehicles(id_to_factory: dict, id_to_vehicle: dict, ini
 def simulate(factory_info_file: str, route_info_file: str, instance: str):
     simulate_env = __initialize(factory_info_file, route_info_file, instance)
     if simulate_env is not None:
-        # 模拟器仿真过程
+        # Simulator simulation process
         simulate_env.run()
     return simulate_env.total_score

@@ -53,7 +53,7 @@ class Vehicle(object):
         # cur_factory_id: 车辆当前所在的工厂, 如果当前不在任何工厂则为""
         # the factory id where the vehicle is currently located. If the vehicle currently is not in any factory, the value is ""
         self.cur_factory_id = ""
-        # 车辆到达和离开当前所在工厂的时间
+        # The time the vehicle arrives and leaves the current factory
         self.arrive_time_at_current_factory = 0
         self.leave_time_at_current_factory = 0
 

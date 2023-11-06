@@ -98,7 +98,7 @@ class SimulateEnvironment(object):
         while True:
             logger.info(f"{'*' * 50}")
 
-            # 确定当前时间, 取算法执行时间和模拟器的切片时间的大值
+            # Determine the current time and take the larger value of the algorithm execution time and the simulator's slicing time
             self.cur_time = self.pre_time + (used_seconds // self.time_interval + 1) * self.time_interval
             logger.info(f"cur time: {datetime.datetime.fromtimestamp(self.cur_time)}, "
                         f"pre time: {datetime.datetime.fromtimestamp(self.pre_time)}")
@@ -106,61 +106,58 @@ class SimulateEnvironment(object):
             # update the status of vehicles and orders in a given interval [self.pre_time, self.cur_time]
             updated_input_info = self.update_input()
 
-            # 派单环节, 设计与算法交互
+            # Order dispatching link, interaction between design and algorithm
             used_seconds, dispatch_result = self.dispatch(updated_input_info)
             self.time_to_dispatch_result[self.cur_time] = dispatch_result
 
-            # 校验, 车辆目的地不能改变
+            # Verification, vehicle destination cannot be changed
             if not Checker.check_dispatch_result(dispatch_result, self.id_to_vehicle, self.id_to_order):
                 logger.error("Dispatch result is infeasible")
                 return
 
-            # 根据派单指令更新车辆
+            # Update vehicles according to dispatch instructions
             self.deliver_control_command_to_vehicles(dispatch_result)
 
-            # 判断是否完成所有订单的派发
+            #Determine whether all orders have been dispatched
             if self.complete_the_dispatch_of_all_orders():
                 break
 
             self.pre_time = self.cur_time
 
-            # 若订单已经超时, 但是算法依旧未分配, 模拟终止
+            # If the order has timed out, but the algorithm is still not allocated, the simulation will terminate.
             if self.ignore_allocating_timeout_orders(dispatch_result):
                 logger.error('Simulator terminated')
                 sys.exit(-1)
 
-        # 模拟完成车辆剩下的订单
+        # Simulate the completion of the remaining orders for the vehicle
         self.simulate_the_left_ongoing_orders_of_vehicles(self.id_to_vehicle)
 
-        # 根据self.history 计算指标
+        # Calculate the indicator based on self.history
         self.total_score = Evaluator.calculate_total_score(self.history, self.route_map, len(self.id_to_vehicle))
 
-    # 数据更新
+    # Data Update
     def update_input(self):
         logger.info(f"Start to update the input of {datetime.datetime.fromtimestamp(self.cur_time)}")
 
-        # 获取车辆的位置信息和订单状态
         # Get the updated status of vehicles and orders according to the simulator
         self.vehicle_simulator.run(self.id_to_vehicle, self.pre_time)
         self.vehicle_simulator.parse_simulation_result(self.id_to_vehicle, self.cur_time)
-        # 增加历史记录, add history
+        # Add history
         self.history.add_history_of_vehicles(self.id_to_vehicle, self.cur_time)
         self.history.add_history_of_order_items(self.id_to_vehicle, self.cur_time)
 
-        # 更新订单状态
+        # Update order status
         self.update_status_of_orders(self.vehicle_simulator.completed_item_ids, self.vehicle_simulator.ongoing_item_ids)
 
-        # 更新车辆状态
+        # Update vehicle status
         self.update_status_of_vehicles(self.vehicle_simulator.vehicle_id_to_cur_position_info,
                                        self.vehicle_simulator.vehicle_id_to_destination,
                                        self.vehicle_simulator.vehicle_id_to_carrying_items)
 
-        # 根据当前时间选择待分配订单的物料集合
         # Select the item collection of the orders to be allocated according to the current time
         self.id_to_generated_order_item = get_order_items_to_be_dispatched_of_cur_time(self.id_to_order_item,
                                                                                        self.cur_time)
 
-        # 汇总车辆、订单和路网信息, 作为派单算法的输入
         # create the input of algorithm
         updated_input_info = InputInfo(self.id_to_generated_order_item, self.id_to_ongoing_order_item,
                                        self.id_to_vehicle, self.id_to_factory, self.route_map)
@@ -170,7 +167,7 @@ class SimulateEnvironment(object):
 
         return updated_input_info
 
-    # 更新订单状态
+    # Update order status
     def update_status_of_orders(self, completed_item_ids, ongoing_item_ids):
         for item_id in completed_item_ids:
             item = self.id_to_order_item.get(item_id)
@@ -194,7 +191,7 @@ class SimulateEnvironment(object):
         for item_id in expired_item_id_list:
             self.id_to_ongoing_order_item.pop(item_id)
 
-    # 更新车辆状态
+    # Update vehicle status
     def update_status_of_vehicles(self, vehicle_id_to_cur_position_info, vehicle_id_to_destination,
                                   vehicle_id_to_carry_items):
         for vehicle_id, vehicle in self.id_to_vehicle.items():
@@ -226,7 +223,9 @@ class SimulateEnvironment(object):
 
         # 2. Run the algorithm
         if not self.algorithm_calling_command:
-            self.algorithm_calling_command = get_algorithm_calling_command()
+            # self.algorithm_calling_command = get_algorithm_calling_command()
+            self.algorithm_calling_command = 'python ortools_opt/main.py'
+            # self.algorithm_calling_command = 'java main_algorithm'
         time_start_algorithm = time.time()
         used_seconds, message = subprocess_function(self.algorithm_calling_command)
 
@@ -246,7 +245,7 @@ class SimulateEnvironment(object):
             logger.error("Can not catch the 'SUCCESS' from the algorithm. 未寻获算法输出成功标识'SUCCESS'。")
             sys.exit(-1)
 
-    # 判断是否完成所有订单的派发
+    # Determine whether all orders have been dispatched
     def complete_the_dispatch_of_all_orders(self):
         for item in self.id_to_order_item.values():
             if item.delivery_state <= 1:
@@ -257,7 +256,7 @@ class SimulateEnvironment(object):
                     f"we could finish the simulation")
         return True
 
-    # 把车辆身上的剩余订单模拟掉
+    # Simulate the remaining orders on the vehicle
     def simulate_the_left_ongoing_orders_of_vehicles(self, id_to_vehicle: dict):
         self.vehicle_simulator.run(id_to_vehicle, self.cur_time)
         self.history.add_history_of_vehicles(self.id_to_vehicle)
@@ -282,7 +281,7 @@ class SimulateEnvironment(object):
                 if node is not None:
                     node.update_service_time()
 
-    # 检查当前是否有订单已经超时却依旧未分配
+    # Check if there is currently an order that has timed out but is still unallocated.
     def ignore_allocating_timeout_orders(self, dispatch_result):
         vehicle_id_to_item_list = get_item_list_of_vehicles(dispatch_result, self.id_to_vehicle)
         total_item_ids_in_dispatch_result = []

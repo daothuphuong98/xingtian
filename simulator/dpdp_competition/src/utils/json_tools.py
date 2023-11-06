@@ -52,7 +52,7 @@ def import_common_class(class_name):
 def get_algorithm_calling_command():
     files = os.listdir(Configs.root_folder_path)
     for file in files:
-        # 调度算法的入口文件必须以main_algorithm开头
+        # The entry file of the scheduling algorithm must start with main_algorithm
         if file.startswith(Configs.ALGORITHM_ENTRY_FILE_NAME):
             end_name = file.split('.')[-1]
             algorithm_language = Configs.ALGORITHM_LANGUAGE_MAP.get(end_name)
@@ -72,16 +72,16 @@ def get_algorithm_calling_command():
     sys.exit(-1)
 
 
-# 开启进程，调用算法
+# Start the process and call the algorithm
 def subprocess_function(cmd):
-    # 开启子进程，并连接到它们的输入/输出/错误管道，获取返回值
+    # Start child processes and connect to their input/output/error pipes to get return values
     sub_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
     try:
         start_time = time.time()
-        # 设置超时
+        # Set timeout
         sub_process.wait(Configs.MAX_RUNTIME_OF_ALGORITHM)
         end_time = time.time()
-        # 返回算法运行时间和算法返回值
+        # Returns the algorithm running time and algorithm return value
         return end_time - start_time, sub_process.stdout.read().decode()
     except Exception as e:
         logger.error(e)

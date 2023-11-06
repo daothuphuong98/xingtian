@@ -30,7 +30,7 @@ class Checker(object):
         vehicle_id_to_destination = dispatch_result.vehicle_id_to_destination
         vehicle_id_to_planned_route = dispatch_result.vehicle_id_to_planned_route
 
-        # 检查是否所有的车辆都有返回值
+        # Check if all vehicles have return values
         if len(vehicle_id_to_destination) != len(id_to_vehicle):
             logger.error(f"Num of returned destination {len(vehicle_id_to_destination)} "
                          f"is not equal to vehicle number {len(id_to_vehicle)}")
@@ -41,7 +41,7 @@ class Checker(object):
                          f"is not equal to vehicle number {len(id_to_vehicle)}")
             return False
 
-        # 逐个检查各车辆路径
+        # Check each vehicle route one by one
         for vehicle_id, vehicle in id_to_vehicle.items():
             if vehicle_id not in vehicle_id_to_destination:
                 logger.error(f"Destination information of Vehicle {vehicle_id} is not in the returned result")
