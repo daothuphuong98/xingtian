@@ -9,8 +9,8 @@ from src.utils.logging_engine import logger
 import json
 import traceback
 
-TIMEOUT_PENALTY = 1_000
-DROPPABLE_PENALTY = 10_000
+TIMEOUT_PENALTY = 2_000
+DROPPABLE_PENALTY = 6_000
 
 
 def print_solution(data, manager, routing, solution):
@@ -30,6 +30,7 @@ def print_solution(data, manager, routing, solution):
     time_dimension = routing.GetDimensionOrDie('Time')
     total_lateness = 0
     total_distance = 0
+    total_time = 0
     for vehicle_id in range(manager.GetNumberOfVehicles()):
         index = routing.Start(vehicle_id)
         plan_output = f'Route for vehicle {vehicle_id}:\n'
@@ -49,13 +50,14 @@ def print_solution(data, manager, routing, solution):
             distance = data['distance_matrix'][previous_node_index][node_index]
             route_distance += distance
             total_distance += distance
+            total_time += data['time_matrix'][previous_node_index][node_index]
         node_index = manager.IndexToNode(index)
         load_var = capacity_dimension.CumulVar(index)
         route_load = solution.Value(load_var)
         plan_output += f' {node_index} Load({route_load})\n'
         plan_output += f'Distance of the route: {route_distance}m\n'
         print(plan_output)
-    print('Total Lateness:', total_lateness, '\nTotal Distance:', total_distance)
+    print('Total Lateness:', total_lateness, '\nTotal Distance:', total_distance,'\nTotal Time:', total_time)
 
 def solution_to_json(data, manager, routing, solution):
     location_to_factory = data['locations'].set_index('id').to_dict(orient='index')
@@ -151,7 +153,7 @@ def main():
     routing.AddDimension(
         dist_transit_callback_index,
         0,  # no slack
-        100_000,  # vehicle maximum travel distance
+        1_000_000,  # vehicle maximum travel distance
         True,  # start cumul to zero
         distance)
     distance_dimension = routing.GetDimensionOrDie(distance)
@@ -176,7 +178,7 @@ def main():
     routing.AddDimension(
         time_transit_callback_index,
         0,  # no slack
-        1_000_000,  # vehicle maximum travel distance
+        10_000_000,  # vehicle maximum travel time
         True,  # start cumul to zero
         time)
     time_dimension = routing.GetDimensionOrDie(time)
@@ -217,10 +219,6 @@ def main():
         routing.solver().Add(
             distance_dimension.CumulVar(pickup_index)
             <= distance_dimension.CumulVar(delivery_index)
-        )
-        routing.solver().Add(
-            time_dimension.CumulVar(pickup_index)
-            <= time_dimension.CumulVar(delivery_index)
         )
 
     # Add new orders as droppable nodes
