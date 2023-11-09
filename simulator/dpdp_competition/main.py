@@ -2,6 +2,7 @@ import traceback
 import datetime
 import numpy as np
 import sys
+sys.path.append(r"simulator/dpdp_competition")
 
 from src.conf.configs import Configs
 from src.simulator.simulate_api import simulate

@@ -25,7 +25,7 @@ class Configs(object):
     MAX_SCORE = 9999999999
 
     # 算法切片的时间间隔, time interval of simulator
-    ALG_RUN_FREQUENCY = 10  # 单位分钟
+    ALG_RUN_FREQUENCY = 20  # 单位分钟
 
     # 多目标权重之间的系数
     LAMDA = 10000

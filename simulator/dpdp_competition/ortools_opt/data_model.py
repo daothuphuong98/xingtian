@@ -51,15 +51,17 @@ def create_data_model():
         start_locations.append(start_location)
 
     # Add already picked-up orders to location list as compulsory locations
-    for start_loc, vehicle in zip(start_locations[1:], vehicles):
+    for vehicle in vehicles:
         initial_route = []
         # Get unique list of orders from item list
         orders = list(dict.fromkeys([item_id.split('-')[0] for item_id in vehicle['carrying_items']]))
         for order_id in orders:
             demand = 0
+            service_time = 0
             for item in vehicle['carrying_items']:
                 if item.startswith(order_id):
                     demand += id_to_ongoing_orders[item]['demand']
+                    service_time += id_to_ongoing_orders[item]['load_time']
             pickup_id = next(location_id_generator)
             pickup_location = {'id': pickup_id,
                                'order_id': order_id,
@@ -69,9 +71,12 @@ def create_data_model():
             initial_route.append(pickup_id)
 
             deli_id = next(location_id_generator)
-            deli_location = {'id': deli_id, 'order_id': order_id,
-                             'factory_id': id_to_ongoing_orders[item]['delivery_factory_id'], 'demand': -demand,
-                             'time_constraint': id_to_ongoing_orders[item]['committed_completion_time'] - update_time}
+            deli_location = {'id': deli_id, 
+                             'order_id': order_id,
+                             'factory_id': id_to_ongoing_orders[f'{order_id}-1']['delivery_factory_id'], 
+                             'demand': -demand,
+                             'service_time': service_time,
+                             'time_constraint': max(id_to_ongoing_orders[f'{order_id}-1']['committed_completion_time'] - update_time, 1)}
             compulsory_locations.append(deli_location)
             data["pickups_deliveries"].append([pickup_id, deli_id])
 
@@ -87,61 +92,70 @@ def create_data_model():
             initial_route.append(dest_id)
         data['initial_routes'].append(initial_route)
 
+    # Add order_id to item_id dictionary
+    og_order_id = {item: order['order_id'] for item, order in id_to_ongoing_orders.items()}
+    data['items_to_orders'] = {}
+    for item, order in og_order_id.items():
+        if order in data['items_to_orders']:
+            data['items_to_orders'][order].append(item)
+        else:
+            data['items_to_orders'][order] = [item]
+
     # Unallocated orders
     # Split order with capacity > 15
     unallocated_orders = pd.DataFrame(unallocated_orders)
-    # unallocated_orders['order_split_id'] = unallocated_orders['order_id']
-    unallocated_orders_demand = unallocated_orders.groupby('order_id')['demand'].sum().reset_index()
-    for order in unallocated_orders_demand[unallocated_orders_demand['demand'] > vehicles[0]['capacity']].groupby(
-            'order_id'):
-        splits = 0
-        demand_checks = 0
-        for item in order.iteritems():
-            if demand_checks + item['demand'] > vehicles[0]['capacity']:
-                demand_checks = 0
-                splits += 1
-            item['order_id'] = str(splits) + '_' + item['order_id']
-            demand_checks += item['demand']
+    if len(unallocated_orders) > 0:
+        unallocated_orders_demand = unallocated_orders.groupby('order_id')['demand'].sum().reset_index()
+        for order in unallocated_orders_demand[unallocated_orders_demand['demand'] > vehicles[0]['capacity']].groupby(
+                'order_id'):
+            splits = 0
+            demand_checks = 0
+            for item in order.iteritems():
+                if demand_checks + item['demand'] > vehicles[0]['capacity']:
+                    demand_checks = 0
+                    splits += 1
+                item['order_id'] = str(splits) + '_' + item['order_id']
+                demand_checks += item['demand']
 
-    # Get list of order after splitting (all orders have capacity < 15)
-    ua_pickups_deliveries = unallocated_orders.groupby(
-        ['order_id', "pickup_factory_id", "delivery_factory_id", 'committed_completion_time'])[
-        'demand'].sum().reset_index()
+        # Get list of order after splitting (all orders have capacity < 15)
+        ua_pickups_deliveries = unallocated_orders.groupby(
+            ['order_id', "pickup_factory_id", "delivery_factory_id", 'committed_completion_time']).agg({'demand': 'sum', 'load_time': 'sum'}).reset_index()
 
-    #Add dictionary items to orders
-    data['items_to_orders'] = unallocated_orders.groupby('order_id')['id'].apply(list).to_dict()
-    og_order_id = {item: order['order_id'] for item, order in id_to_ongoing_orders.items()}
-    og_order_id2 = {}
-    for item, order in og_order_id.items():
-        if order in og_order_id2:
-            og_order_id2[order].append(item)
-        else:
-            og_order_id2[order] = [item]
-    data['items_to_orders'].update(og_order_id2)
+        #Add dictionary items to orders
+        data['items_to_orders'].update(unallocated_orders.groupby('order_id')['id'].apply(list).to_dict())
 
-    # Add pickup and delivery factories of each unallocated orders to location list as droppable locations:
-    for ind, ua_order in ua_pickups_deliveries.iterrows():
-        pickup_id = next(location_id_generator)
-        pickup_location = {'id': pickup_id,
-                           'order_id': ua_order['order_id'],
-                           'factory_id': ua_order['pickup_factory_id'],
-                           'demand': ua_order['demand']}
-        droppable_locations.append(pickup_location)
+        # Add pickup and delivery factories of each unallocated orders to location list as droppable locations:
+        for ind, ua_order in ua_pickups_deliveries.iterrows():
+            time_to_order = routes[(routes['start_factory_id'] == ua_order['pickup_factory_id']) 
+                                    & (routes['end_factory_id'] == ua_order['delivery_factory_id'])]
+            pickup_id = next(location_id_generator)
+            pickup_location = {'id': pickup_id,
+                            'order_id': ua_order['order_id'],
+                            'factory_id': ua_order['pickup_factory_id'],
+                            'demand': ua_order['demand'],
+                            'service_time': ua_order['load_time'],
+                            'time_to_order': time_to_order.iloc[0,-1],
+                            'time_constraint': ua_order['committed_completion_time'] - update_time}
+            droppable_locations.append(pickup_location)
 
-        deli_id = next(location_id_generator)
-        deli_location = {'id': deli_id, 'order_id': ua_order['order_id'],
-                         'factory_id': ua_order['delivery_factory_id'], 'demand': -ua_order['demand'],
-                         'time_constraint': ua_order['committed_completion_time'] - update_time}
-        droppable_locations.append(deli_location)
+            deli_id = next(location_id_generator)
+            deli_location = {'id': deli_id, 
+                             'order_id': ua_order['order_id'],
+                            'factory_id': ua_order['delivery_factory_id'], 
+                            'demand': -ua_order['demand'],
+                            'service_time': ua_order['load_time'],
+                            'time_constraint': max(ua_order['committed_completion_time'] - update_time, 1)}
+            droppable_locations.append(deli_location)
 
-        data["pickups_deliveries"].append([pickup_id, deli_id])
+            data["pickups_deliveries"].append([pickup_id, deli_id])
 
     # Convert start factories, compulsory factories and droppable factories as pandas DF
     start_locations = pd.DataFrame(start_locations)
     compulsory_locations = pd.DataFrame(compulsory_locations)
     compulsory_locations['droppable'] = 0
     droppable_locations = pd.DataFrame(droppable_locations)
-    droppable_locations['droppable'] = 1
+    if len(droppable_locations) > 0:
+        droppable_locations['droppable'] = droppable_locations.apply(lambda x: 0 if x['time_to_order'] * 2 > x['time_constraint'] and x['demand'] > 0 else 1, axis=1)
 
     # Join all 3 locations into 1
     locations = pd.concat([start_locations, compulsory_locations, droppable_locations]).drop_duplicates()
@@ -187,8 +201,20 @@ def create_data_model():
 
         previous_solution.append(prev_solutions_location)
 
+    # Set distance and time of start location and already picked-up location as 0
+    zero_location = [item for sublist in data['initial_routes'] for item in sublist]
+    for loc_idx in zero_location:
+        if locations['dest'][loc_idx] == 1:
+            continue
+        distance_matrix.iloc[:, loc_idx] = 0
+        distance_matrix.iloc[loc_idx, :] = 0
+
+        time_matrix.iloc[:, loc_idx] = 0
+        time_matrix.iloc[loc_idx, :] = 0
+    
     data['distance_matrix'] = (distance_matrix*10).astype(int).values
     data['time_matrix'] = time_matrix.astype(int).values
+
     data['locations'] = locations
     previous_solution = [list(dict.fromkeys(initial_route + solution)) for solution, initial_route in zip(previous_solution, data['initial_routes'])]
     data['previous_solution'] = previous_solution
@@ -198,8 +224,9 @@ def create_data_model():
     data["vehicle_capacities"] = [int(vehicle['capacity']*100) for vehicle in vehicles]
     data["starts"] = start_locations['id'].tolist()[1:]
     data['ends'] = [0 for _ in vehicles]
-    data['droppable'] = locations.loc[locations['droppable'] == 1, 'id'].tolist()
+    data['droppable'] = locations.loc[locations['droppable'] == 1, 'id'].astype(int).tolist()
     data['time_windows'] = locations['time_constraint'].fillna(0).astype(int).tolist()
+    data['service_time'] = locations['service_time'].fillna(0).astype(int).tolist()
 
     return data
 

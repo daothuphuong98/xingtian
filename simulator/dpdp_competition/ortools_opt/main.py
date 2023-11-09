@@ -1,5 +1,5 @@
 import sys
-sys.path.append(r"C:\Users\Phuong\PycharmProjects\xingtian\simulator\dpdp_competition")
+sys.path.append(r"simulator/dpdp_competition")
 import gc
 gc.collect()
 from ortools.constraint_solver import routing_enums_pb2
@@ -9,7 +9,8 @@ from src.utils.logging_engine import logger
 import json
 import traceback
 
-TIMEOUT_PENALTY = 100
+TIMEOUT_PENALTY = 1_000
+DROPPABLE_PENALTY = 10_000
 
 
 def print_solution(data, manager, routing, solution):
@@ -26,26 +27,35 @@ def print_solution(data, manager, routing, solution):
     print(dropped_nodes)
     # Display routes
     capacity_dimension = routing.GetDimensionOrDie('Capacity')
+    time_dimension = routing.GetDimensionOrDie('Time')
+    total_lateness = 0
+    total_distance = 0
     for vehicle_id in range(manager.GetNumberOfVehicles()):
         index = routing.Start(vehicle_id)
         plan_output = f'Route for vehicle {vehicle_id}:\n'
         route_distance = 0
         while not routing.IsEnd(index):
+            time_var = time_dimension.CumulVar(index)
             node_index = manager.IndexToNode(index)
             route_load = data['demands'][node_index]
-            plan_output += f' {node_index} Load({route_load}) -> '
+            lateness = data["time_windows"][node_index] - solution.Min(time_var)
+            if lateness < 0:
+                total_lateness += lateness
+            plan_output += f' {node_index} Load({route_load}, {lateness}) -> '
             previous_index = index
             previous_node_index = manager.IndexToNode(previous_index)
             index = solution.Value(routing.NextVar(index))
             node_index = manager.IndexToNode(index)
             distance = data['distance_matrix'][previous_node_index][node_index]
             route_distance += distance
+            total_distance += distance
         node_index = manager.IndexToNode(index)
         load_var = capacity_dimension.CumulVar(index)
         route_load = solution.Value(load_var)
         plan_output += f' {node_index} Load({route_load})\n'
         plan_output += f'Distance of the route: {route_distance}m\n'
         print(plan_output)
+    print('Total Lateness:', total_lateness, '\nTotal Distance:', total_distance)
 
 def solution_to_json(data, manager, routing, solution):
     location_to_factory = data['locations'].set_index('id').to_dict(orient='index')
@@ -68,7 +78,7 @@ def solution_to_json(data, manager, routing, solution):
                       'pickup_item_list': [],
                       'arrive_time': 0,
                       'leave_time': 0}
-            if type(factory['order_id']) == str:
+            if isinstance(factory['order_id'], str):
                 if factory['demand'] > 0:
                     output['pickup_item_list'] += data['items_to_orders'][factory['order_id']]
                 else:
@@ -76,7 +86,7 @@ def solution_to_json(data, manager, routing, solution):
             output['delivery_item_list'] = output['delivery_item_list'][::-1]
 
             # Add location to planned route if vehicle has never been to location and location is not destination
-            if output and (node_index not in data['initial_routes'][vehicle] or location_to_factory[node_index]['dest'] >= 1):
+            if output and (node_index not in data['initial_routes'][vehicle] or location_to_factory[node_index].get('dest', 0) >= 1):
                 plan_output.append(output)
             index = solution.Value(routing.NextVar(index))
 
@@ -145,8 +155,7 @@ def main():
         True,  # start cumul to zero
         distance)
     distance_dimension = routing.GetDimensionOrDie(distance)
-
-    # distance_dimension.SetGlobalSpanCostCoefficient(100)
+    # distance_dimension.SetGlobalSpanCostCoefficient(10)
 
     # Time
     # Create and register a transit callback.
@@ -155,9 +164,12 @@ def main():
         # Convert from routing variable Index to distance matrix NodeIndex.
         from_node = manager.IndexToNode(from_index)
         to_node = manager.IndexToNode(to_index)
-        return data['time_matrix'][from_node][to_node]
+        return data['time_matrix'][from_node][to_node] + data['service_time'][to_node]
 
     time_transit_callback_index = routing.RegisterTransitCallback(time_callback)
+
+    # Define cost of each arc.
+    routing.SetArcCostEvaluatorOfAllVehicles(time_transit_callback_index)
 
     # Add Distance constraint.
     time = 'Time'
@@ -170,12 +182,13 @@ def main():
     time_dimension = routing.GetDimensionOrDie(time)
 
     # Add soft time window constraint
-    for location_idx, time_window in enumerate(data['time_windows']):
-        if location_idx in data['starts'] or location_idx == 0:
-            continue
+    for location_idx, time_window, demand in zip(range(len(data['demands'])), data['time_windows'], data['demands']):
         if time_window > 0:
             index = manager.NodeToIndex(location_idx)
-            time_dimension.SetCumulVarSoftUpperBound(index, time_window, TIMEOUT_PENALTY)
+            if demand < 0:
+                time_dimension.SetCumulVarSoftUpperBound(index, time_window, TIMEOUT_PENALTY)
+            # if demand > 0:
+            #     time_dimension.CumulVar(index).SetRange(0, time_window)
 
     # Capacity
     def demand_callback(from_index):
@@ -211,10 +224,10 @@ def main():
         )
 
     # Add new orders as droppable nodes
-    routing.AddDisjunction(
-        [manager.NodeToIndex(node) for node in data['droppable']],
-        1000,
-        len(data['droppable']))  # high penalty so solver has strong incentive to add it
+    for node in data['droppable']:
+        routing.AddDisjunction(
+            [manager.NodeToIndex(node)],
+            DROPPABLE_PENALTY) 
 
     for vehicle, initial_route in enumerate(data['initial_routes']):
         if len(initial_route) > 0:
@@ -232,42 +245,44 @@ def main():
 
     search_parameters = pywrapcp.DefaultRoutingSearchParameters()
     search_parameters.first_solution_strategy = (
-        routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC)
+        routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC)
     search_parameters.local_search_metaheuristic = (
-        routing_enums_pb2.LocalSearchMetaheuristic.AUTOMATIC)
+        routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
+    
     search_parameters.time_limit.FromSeconds(10)
-    # search_parameters.log_search = True
     search_parameters.use_full_propagation = False
+    # search_parameters.log_search = True
     # search_parameters.use_depth_first_search = True
-    search_parameters.savings_max_memory_usage_bytes = 2e9
+    search_parameters.guided_local_search_lambda_coefficient = 1
+    # search_parameters.savings_max_memory_usage_bytes = 3e9
 
     routing.CloseModelWithParameters(search_parameters)
+
     # ReadAssignmentFromRoutes will close the model...
-    previous_solution = [[manager.NodeToIndex(node) for node in route]for route in data['previous_solution']]
-    previous_solution = routing.ReadAssignmentFromRoutes(previous_solution, True)
-    print('Initial solution:')
-    print_solution(data, manager, routing, previous_solution)
+    # previous_solution = [[manager.NodeToIndex(node) for node in route]for route in data['previous_solution']]
+    # previous_solution = routing.ReadAssignmentFromRoutes(previous_solution, True)
+    # print('Initial solution:')
+    # print_solution(data, manager, routing, previous_solution)
 
     # Solve the problem.
-    solution = routing.SolveFromAssignmentWithParameters(previous_solution, search_parameters)
-    # solution = routing.SolveWithParameters(search_parameters)
+    # solution = routing.SolveFromAssignmentWithParameters(previous_solution, search_parameters)
+    solution = routing.SolveWithParameters(search_parameters)
+    print("Solver status: ", routing.status())
 
     # Print solution on console.
     if solution:
         print_solution(data, manager, routing, solution)
+        gc.collect()
+        print("SUCCESS")
         solution_to_json(data, manager, routing, solution)
-
-        solution.delete()
-        del(routing)
     else:
         raise Exception('Cannot find solution!')
-
 
 if __name__ == '__main__':
     try:
         main()
-        print("SUCCESS")
     except Exception as e:
         logger.error("Failed to run algorithm")
         logger.error(f"Error: {e}, {traceback.format_exc()}")
+        print(e)
         print("FAIL")
