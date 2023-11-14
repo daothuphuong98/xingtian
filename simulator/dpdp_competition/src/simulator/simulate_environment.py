@@ -222,28 +222,37 @@ class SimulateEnvironment(object):
         convert_input_info_to_json_files(input_info)
 
         # 2. Run the algorithm
-        if not self.algorithm_calling_command:
-            # self.algorithm_calling_command = get_algorithm_calling_command()
-            self.algorithm_calling_command = 'python ortools_opt/main.py'
-            # self.algorithm_calling_command = 'java main_algorithm'
-        time_start_algorithm = time.time()
-        used_seconds, message = subprocess_function(self.algorithm_calling_command)
-
-        # 3. parse the output json of the algorithm
-        if Configs.ALGORITHM_SUCCESS_FLAG in message:
-            if (time_start_algorithm < os.stat(Configs.algorithm_output_destination_path).st_mtime < time.time()
-                    and time_start_algorithm < os.stat(
-                        Configs.algorithm_output_planned_route_path).st_mtime < time.time()):
-                vehicle_id_to_destination, vehicle_id_to_planned_route = get_output_of_algorithm(self.id_to_order_item)
-                dispatch_result = DispatchResult(vehicle_id_to_destination, vehicle_id_to_planned_route)
-                return used_seconds, dispatch_result
+        flag = 0
+        while True:
+            if not self.algorithm_calling_command:
+                # self.algorithm_calling_command = get_algorithm_calling_command()
+                if flag == 0:
+                    self.algorithm_calling_command = 'python /workspaces/xingtian/simulator/dpdp_competition/ortools_opt/test.py'
+                else:
+                    self.algorithm_calling_command = 'python /workspaces/xingtian/simulator/dpdp_competition/ortools_opt/main.py'
+                # self.algorithm_calling_command = 'java main_algorithm'
+            time_start_algorithm = time.time()
+            used_seconds, message = subprocess_function(self.algorithm_calling_command)
+            
+            # 3. parse the output json of the algorithm
+            if Configs.ALGORITHM_SUCCESS_FLAG in message:
+                if (time_start_algorithm < os.stat(Configs.algorithm_output_destination_path).st_mtime < time.time()
+                        and time_start_algorithm < os.stat(
+                            Configs.algorithm_output_planned_route_path).st_mtime < time.time()):
+                    vehicle_id_to_destination, vehicle_id_to_planned_route = get_output_of_algorithm(self.id_to_order_item)
+                    dispatch_result = DispatchResult(vehicle_id_to_destination, vehicle_id_to_planned_route)
+                    return used_seconds, dispatch_result
+                else:
+                    logger.error("Output_json files from the algorithm is not the newest.")
+                    if flag == 0:
+                        logger.info("Retry")
+                        flag = 1
+                    else:
+                        sys.exit(-1)
             else:
-                logger.error("Output_json files from the algorithm is not the newest.")
+                logger.error(message)
+                logger.error("Can not catch the 'SUCCESS' from the algorithm. 未寻获算法输出成功标识'SUCCESS'。")
                 sys.exit(-1)
-        else:
-            logger.error(message)
-            logger.error("Can not catch the 'SUCCESS' from the algorithm. 未寻获算法输出成功标识'SUCCESS'。")
-            sys.exit(-1)
 
     # Determine whether all orders have been dispatched
     def complete_the_dispatch_of_all_orders(self):

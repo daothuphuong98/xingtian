@@ -160,7 +160,7 @@ class OrtoolsOptimizer():
             True,  # start cumul to zero
             distance)
         distance_dimension = routing.GetDimensionOrDie(distance)
-        # distance_dimension.SetGlobalSpanCostCoefficient(100)
+        distance_dimension.SetGlobalSpanCostCoefficient(100)
 
         # Time
         # Create and register a transit callback.
@@ -253,7 +253,7 @@ class OrtoolsOptimizer():
         
         search_parameters.time_limit.FromSeconds(self.ortools_config.TIME_LIMIT)
         search_parameters.use_full_propagation = False
-        search_parameters.guided_local_search_lambda_coefficient = 1
+        search_parameters.guided_local_search_lambda_coefficient = 10
         
         routing.CloseModelWithParameters(search_parameters)
 

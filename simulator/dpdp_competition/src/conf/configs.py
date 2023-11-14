@@ -69,7 +69,7 @@ class Configs(object):
                                                                 "unallocated_order_items.json")
     algorithm_ongoing_order_items_input_path = os.path.join(algorithm_data_interaction_folder_path,
                                                             "ongoing_order_items.json")
-    algorithm_items_to_orders = os.path.jion(algorithm_data_interaction_folder_path,
+    algorithm_items_to_orders = os.path.join(algorithm_data_interaction_folder_path,
                                              "item_to_order.json")
 
     algorithm_output_destination_path = os.path.join(algorithm_data_interaction_folder_path, 'output_destination.json')

@@ -116,8 +116,8 @@ def create_data_model():
     unallocated_orders = pd.DataFrame(unallocated_orders)
     split_order_lookup = {}
     if len(unallocated_orders) > 0:
-        unallocated_orders_demand = unallocated_orders.groupby('order_id')['demand'].sum().reset_index()
-        for order_id, order in unallocated_orders_demand[unallocated_orders_demand['demand'] > ortools_config.MAX_ORDER_DEMAND]:
+        unallocated_orders_demand = unallocated_orders.groupby('order_id').agg({'demand': 'sum'})
+        for order_id, order in unallocated_orders_demand[unallocated_orders_demand['demand'] > ortools_config.MAX_ORDER_DEMAND].iterrows():
             splits = 0
             demand_checks = 0
             for item_id, item in unallocated_orders[unallocated_orders['order_id'] == order_id].iterrows():
