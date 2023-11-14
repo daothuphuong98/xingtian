@@ -25,7 +25,7 @@ class Configs(object):
     MAX_SCORE = 9999999999
 
     # 算法切片的时间间隔, time interval of simulator
-    ALG_RUN_FREQUENCY = 20  # 单位分钟
+    ALG_RUN_FREQUENCY = 10  # 单位分钟
 
     # 多目标权重之间的系数
     LAMDA = 10000
@@ -69,6 +69,8 @@ class Configs(object):
                                                                 "unallocated_order_items.json")
     algorithm_ongoing_order_items_input_path = os.path.join(algorithm_data_interaction_folder_path,
                                                             "ongoing_order_items.json")
+    algorithm_items_to_orders = os.path.jion(algorithm_data_interaction_folder_path,
+                                             "item_to_order.json")
 
     algorithm_output_destination_path = os.path.join(algorithm_data_interaction_folder_path, 'output_destination.json')
     algorithm_output_planned_route_path = os.path.join(algorithm_data_interaction_folder_path, 'output_route.json')
@@ -99,5 +101,5 @@ class Configs(object):
     A_DAY_TIME_SECONDS = 24 * 60 * 60
 
     # 数据集选项，列表为空则选择所有数据集，如[]，[1], [1, 2, 3], [64]
-    selected_instances = [11]
+    selected_instances = [40]
     all_test_instances = range(1, 65)

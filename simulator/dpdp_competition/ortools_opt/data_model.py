@@ -2,6 +2,7 @@ import numpy as np
 from src.conf.configs import Configs
 import pandas as pd
 import json
+from ortools_opt.config import OrtoolsConfigs
 
 
 def get_location_id():
@@ -15,17 +16,23 @@ def create_data_model():
     """Stores the data for the problem."""
     data = {}
     config = Configs()
+    ortools_config = OrtoolsConfigs()
     location_id_generator = get_location_id()
 
     routes = pd.read_csv(config.route_info_file_path)
     factories = pd.read_csv(config.factory_info_file_path)
+    with open(config.algorithm_items_to_orders) as f:
+        prev_split_order_lookup = json.load(f)
     with open(config.algorithm_vehicle_input_info_path) as f:
         vehicles = json.load(f)
     with open(config.algorithm_unallocated_order_items_input_path) as f:
         unallocated_orders = json.load(f)
     with open(config.algorithm_ongoing_order_items_input_path) as f:
         ongoing_orders = json.load(f)
-        id_to_ongoing_orders = {order['id']: order for order in ongoing_orders}
+        
+    for order in ongoing_orders + unallocated_orders:
+        order['order_id'] = prev_split_order_lookup.get(order['id'], order['order_id'])
+    id_to_ongoing_orders = {order['id']: order for order in ongoing_orders}
 
     update_time = vehicles[0]['update_time']
 
@@ -54,14 +61,17 @@ def create_data_model():
     for vehicle in vehicles:
         initial_route = []
         # Get unique list of orders from item list
-        orders = list(dict.fromkeys([item_id.split('-')[0] for item_id in vehicle['carrying_items']]))
+        orders = list(dict.fromkeys([prev_split_order_lookup.get(item_id, item_id.split('-')[0]) for item_id in vehicle['carrying_items']]))
         for order_id in orders:
+            # Get real order id as splitted order has id <index>_<real_order_id> 
             demand = 0
             service_time = 0
+            temp_item_id = None
             for item in vehicle['carrying_items']:
-                if item.startswith(order_id):
+                if item.startswith(order_id) or prev_split_order_lookup.get(item) == order_id:
                     demand += id_to_ongoing_orders[item]['demand']
                     service_time += id_to_ongoing_orders[item]['load_time']
+                    temp_item_id = item
             pickup_id = next(location_id_generator)
             pickup_location = {'id': pickup_id,
                                'order_id': order_id,
@@ -73,10 +83,10 @@ def create_data_model():
             deli_id = next(location_id_generator)
             deli_location = {'id': deli_id, 
                              'order_id': order_id,
-                             'factory_id': id_to_ongoing_orders[f'{order_id}-1']['delivery_factory_id'], 
+                             'factory_id': id_to_ongoing_orders[temp_item_id]['delivery_factory_id'], 
                              'demand': -demand,
                              'service_time': service_time,
-                             'time_constraint': max(id_to_ongoing_orders[f'{order_id}-1']['committed_completion_time'] - update_time, 1)}
+                             'time_constraint': max(id_to_ongoing_orders[temp_item_id]['committed_completion_time'] - update_time, 1)}
             compulsory_locations.append(deli_location)
             data["pickups_deliveries"].append([pickup_id, deli_id])
 
@@ -104,17 +114,18 @@ def create_data_model():
     # Unallocated orders
     # Split order with capacity > 15
     unallocated_orders = pd.DataFrame(unallocated_orders)
+    split_order_lookup = {}
     if len(unallocated_orders) > 0:
         unallocated_orders_demand = unallocated_orders.groupby('order_id')['demand'].sum().reset_index()
-        for order in unallocated_orders_demand[unallocated_orders_demand['demand'] > vehicles[0]['capacity']].groupby(
-                'order_id'):
+        for order_id, order in unallocated_orders_demand[unallocated_orders_demand['demand'] > ortools_config.MAX_ORDER_DEMAND]:
             splits = 0
             demand_checks = 0
-            for item in order.iteritems():
-                if demand_checks + item['demand'] > vehicles[0]['capacity']:
+            for item_id, item in unallocated_orders[unallocated_orders['order_id'] == order_id].iterrows():
+                if demand_checks + item['demand'] > ortools_config.SPLIT_THRESHOLD:
                     demand_checks = 0
                     splits += 1
-                item['order_id'] = str(splits) + '_' + item['order_id']
+                unallocated_orders.loc[item_id, 'order_id'] = str(splits) + '_' + item['order_id']
+                split_order_lookup[item['id']] = str(splits) + '_' + item['order_id']
                 demand_checks += item['demand']
 
         # Get list of order after splitting (all orders have capacity < 15)
@@ -148,6 +159,8 @@ def create_data_model():
             droppable_locations.append(deli_location)
 
             data["pickups_deliveries"].append([pickup_id, deli_id])
+    
+    split_order_lookup.update(prev_split_order_lookup)
 
     # Convert start factories, compulsory factories and droppable factories as pandas DF
     start_locations = pd.DataFrame(start_locations)
@@ -155,13 +168,13 @@ def create_data_model():
     compulsory_locations['droppable'] = 0
     droppable_locations = pd.DataFrame(droppable_locations)
     if len(droppable_locations) > 0:
-        droppable_locations['droppable'] = droppable_locations.apply(lambda x: 0 if x['time_to_order'] * 2 > x['time_constraint'] and x['demand'] > 0 else 1, axis=1)
+        droppable_locations['droppable'] = droppable_locations.apply(lambda x: 0 if (x['time_to_order'] + Configs.DOCK_APPROACHING_TIME) * ortools_config.COMPULSORY_ORDER_THRESHOLD > x['time_constraint'] and x['demand'] > 0 else 1, axis=1)
 
     # Join all 3 locations into 1
     locations = pd.concat([start_locations, compulsory_locations, droppable_locations]).drop_duplicates()
     locations['dummy'] = 1
     locations = locations.merge(factories, on='factory_id', how='left')
-    data['demands'] = (locations['demand'] * 100).astype(int).tolist()
+    data['demands'] = (locations['demand'] * ortools_config.DEMAND_COEF).astype(int).tolist()
 
     # Create distance and time matrix
     route_df = locations[['factory_id', 'dummy', 'id']].merge(locations[['factory_id', 'dummy', 'id']],
@@ -190,12 +203,23 @@ def create_data_model():
 
         for next_location in prev_solutions:
             if next_location:
-                delivery_orders = list(
-                    dict.fromkeys([item_id.split('-')[0] for item_id in next_location['delivery_item_list']]))
+                delivery_orders = []
+                for item_id in next_location['delivery_item_list']:
+                    order_id = item_id.split('-')[0]
+                    if not delivery_orders_to_location.get(order_id):
+                        order_id = split_order_lookup.get(item_id)
+                    if order_id and not order_id in delivery_orders:
+                        delivery_orders.append(order_id)
                 delivery_location = [delivery_orders_to_location[ids] for ids in delivery_orders if ids in delivery_orders_to_location]
                 prev_solutions_location += delivery_location
 
-                pickup_orders = list(dict.fromkeys([item_id.split('-')[0] for item_id in next_location['pickup_item_list']]))
+                pickup_orders = []
+                for item_id in next_location['pickup_item_list']:
+                    order_id = item_id.split('-')[0]
+                    if not pickup_orders_to_location.get(order_id):
+                        order_id = split_order_lookup.get(item_id)
+                    if order_id and not order_id in pickup_orders:
+                        pickup_orders.append(order_id)
                 pickup_location = [pickup_orders_to_location[ids] for ids in pickup_orders]
                 prev_solutions_location += pickup_location
 
@@ -212,21 +236,26 @@ def create_data_model():
         time_matrix.iloc[:, loc_idx] = 0
         time_matrix.iloc[loc_idx, :] = 0
     
-    data['distance_matrix'] = (distance_matrix*10).astype(int).values
+    # Load data in to data dict.
+    data['distance_matrix'] = (distance_matrix*ortools_config.DISTANCE_COEF).astype(int).values
+    time_matrix[time_matrix > 0] += Configs.DOCK_APPROACHING_TIME
     data['time_matrix'] = time_matrix.astype(int).values
 
     data['locations'] = locations
-    previous_solution = [list(dict.fromkeys(initial_route + solution)) for solution, initial_route in zip(previous_solution, data['initial_routes'])]
-    data['previous_solution'] = previous_solution
+    data['previous_solution'] = [list(dict.fromkeys(initial_route + solution)) for solution, initial_route in zip(previous_solution, data['initial_routes'])]
 
     data["num_vehicles"] = len(vehicles)
     data['vehicles'] = vehicles
-    data["vehicle_capacities"] = [int(vehicle['capacity']*100) for vehicle in vehicles]
+    data["vehicle_capacities"] = [int(vehicle['capacity']*ortools_config.DEMAND_COEF) for vehicle in vehicles]
     data["starts"] = start_locations['id'].tolist()[1:]
     data['ends'] = [0 for _ in vehicles]
     data['droppable'] = locations.loc[locations['droppable'] == 1, 'id'].astype(int).tolist()
     data['time_windows'] = locations['time_constraint'].fillna(0).astype(int).tolist()
     data['service_time'] = locations['service_time'].fillna(0).astype(int).tolist()
+
+    # Return a dictionary of item_id to order_id for look-up in case of order splitting
+    with open(config.algorithm_items_to_orders, 'w') as f:
+        json.dump(split_order_lookup, f, indent=4)
 
     return data
 
